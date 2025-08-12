@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -86,11 +87,14 @@ uint64_t s_1(uint64_t x)
 }
 
 /* Errors */
-#define ENLOBJ 2000 /* Passed null object */
+#define ENLOBJ  0x7D0 /* Passed null object, expected non null */
+#define ENNLOBJ 0x7D1 /* Passed non null object, expected null */
+
 const char *my_strerror(int err)
 {
   switch (err) {
-    case ENLOBJ: return "BitStream error: A null pointer was passed as argument";
+    case ENLOBJ: return "BitStream error: A null pointer was passed";
+    case ENNLOBJ: return "read_entire_file: A non null pointer was passed";
     default: return strerror(err);
   }
 }
@@ -102,6 +106,9 @@ struct BitStream {
   size_t bitcount;
 };
 
+/* Allocates a BitStream on the heap */
+/* Returns a pointer to the newly allocated struct */
+/* Returns NULL and sets errno if there were errors */
 struct BitStream *BitStream_new(size_t bytes_capacity)
 {
   struct BitStream *bs;
@@ -119,6 +126,7 @@ struct BitStream *BitStream_new(size_t bytes_capacity)
   return bs;
 }
 
+/* Frees a heap allocated BitStream and its items */
 void BitStream_free(struct BitStream *bs)
 {
   assert(bs != NULL);
@@ -127,8 +135,8 @@ void BitStream_free(struct BitStream *bs)
   free(bs);
 }
 
-/* Appends a bit (either 0 or 1) to the stream */
-/* Returns false if error occurred */
+/* Appends a bit (either 0 or 1) to the BitStream */
+/* Returns false and sets errno on error */
 bool BitStream_append_bit(struct BitStream *bs, bool bit)
 {
   if (bs == NULL) {
@@ -136,14 +144,23 @@ bool BitStream_append_bit(struct BitStream *bs, bool bit)
     return false;
   }
   if (bs->bitcount + 1 > bs->bytes_capacity * 8) {
-    /* Needs to realloc */
-    assert(false); /* TODO */
+    size_t new_capacity = bs->bytes_capacity + (bs->bytes_capacity / 2);
+    struct BitStream *new_bs = realloc(bs->items, new_capacity);
+    if (new_bs == NULL) return false; /* errno is set by realloc */
+    memset(
+      bs->items + bs->bytes_capacity,
+      0,
+      new_capacity - bs->bytes_capacity
+    );
+    bs = new_bs;
+    bs->bytes_capacity = new_capacity;
   }
 
   if (!bit) {
     bs->bitcount++;
     return true;
   }
+
   size_t byte_index = bs->bitcount == 0 ? 0 : bs->bitcount / 8 - 1;
   size_t bit_index = bs->bitcount == 0 ? 0 : bs->bitcount % 8;
 
@@ -153,13 +170,72 @@ bool BitStream_append_bit(struct BitStream *bs, bool bit)
   return true;
 }
 
-#define strerror my_strerror
+/* Reads an entire file by chunks */
+/* Returns the amount of bytes read */
+/* On realloc failure, returns number of bytes read so far, leaves *d allocated */
+/* Returns 0 and sets errno on error */
+size_t read_entire_file(FILE *fd, uint8_t **d)
+{
+  if (*d != NULL) {
+    errno = ENNLOBJ;
+    return 0;
+  }
+  *d = malloc(4096);
+  if (*d == NULL) return 0; /* errno is set by malloc */
+  size_t size = 0;
+  size_t capacity = 4096;
 
+  uint8_t buffer[4096];
+
+  for (
+    size_t bytes_read = fread(buffer, 1, sizeof(buffer), fd); /* reads sizeof(buffer) amount of bytes */
+    bytes_read > 0;
+    size += bytes_read, bytes_read = fread(buffer, 1, sizeof(buffer), fd)
+  ) {
+    if (capacity < size + bytes_read) {
+      size_t new_capacity = capacity + (capacity / 2);
+      while (new_capacity < size + bytes_read) {
+        new_capacity += new_capacity / 2;
+      }
+
+      uint8_t *tmp = realloc(*d, new_capacity);
+      if (tmp == NULL) {
+        /* keep the data and let caller decide */
+        return 0; /* errno is set by realloc */
+      }
+
+      *d = tmp;
+      capacity = new_capacity;
+    }
+
+    memcpy(*d + size, buffer, bytes_read);
+  }
+
+  if (ferror(fd)) {
+    errno = EIO;
+    return 0;
+  }
+
+  return size;
+}
+
+#define strerror my_strerror
 int main(int argc, char **argv)
 {
+  /* TODO: commandline arguments, read all files, display sha512 sums for each */
+  uint8_t *data = NULL;
+  size_t data_size = read_entire_file(stdin, &data);
+  if (data_size == 0) {
+    fprintf(stderr, "Error reading from stdin: %s", strerror(errno));
+    return errno;
+  }
+
+  printf("%s", (const char *) data);
+
   /* 5. Preprocessing */
   /* 5.1 Padding */
   /* 5.2 Parsing */
   /* 5.3 Setting the initial hash value */
+
   return 0;
 }
