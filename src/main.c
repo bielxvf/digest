@@ -63,7 +63,7 @@ uint64_t Maj(uint64_t x, uint64_t y, uint64_t z)
 
 uint64_t rotr(uint64_t x, unsigned short n)
 {
-  return (x << n) | (x << (64 - n));
+  return (x >> n) | (x << (64 - n));
 }
 
 uint64_t S_0(uint64_t x)
@@ -93,8 +93,8 @@ uint64_t s_1(uint64_t x)
 const char *my_strerror(int err)
 {
   switch (err) {
-    case ENLOBJ: return "BitStream error: A null pointer was passed";
-    case ENNLOBJ: return "read_entire_file: A non null pointer was passed";
+    case ENLOBJ: return "Expected non null pointer";
+    case ENNLOBJ: return "Expected null pointer";
     default: return strerror(err);
   }
 }
@@ -145,14 +145,14 @@ bool BitStream_append_bit(struct BitStream *bs, bool bit)
   }
   if (bs->bitcount + 1 > bs->bytes_capacity * 8) {
     size_t new_capacity = bs->bytes_capacity + (bs->bytes_capacity / 2);
-    struct BitStream *new_bs = realloc(bs->items, new_capacity);
-    if (new_bs == NULL) return false; /* errno is set by realloc */
+    uint8_t *new_items = realloc(bs->items, new_capacity);
+    if (new_items == NULL) return false; /* errno is set by realloc */
     memset(
       bs->items + bs->bytes_capacity,
       0,
       new_capacity - bs->bytes_capacity
     );
-    bs = new_bs;
+    bs->items = new_items;
     bs->bytes_capacity = new_capacity;
   }
 
@@ -161,12 +161,47 @@ bool BitStream_append_bit(struct BitStream *bs, bool bit)
     return true;
   }
 
-  size_t byte_index = bs->bitcount == 0 ? 0 : bs->bitcount / 8 - 1;
-  size_t bit_index = bs->bitcount == 0 ? 0 : bs->bitcount % 8;
+  size_t byte_index = bs->bitcount / 8;
+  size_t bit_index = bs->bitcount % 8;
 
   bs->items[byte_index] |= 1 << (7 - bit_index);
   bs->bitcount++;
 
+  return true;
+}
+
+/* Appends a byte to the BitStream */
+/* Returns false and sets errno on error */
+bool BitStream_append_uint8(struct BitStream *bs, uint8_t byte)
+{
+  if (bs == NULL) {
+    errno = ENLOBJ;
+    return false;
+  }
+  
+  if (bs->bitcount + 8 > bs->bytes_capacity * 8) {
+    size_t new_capacity = bs->bytes_capacity + (bs->bytes_capacity / 2);
+    uint8_t *new_items = realloc(bs->items, new_capacity);
+    if (new_items == NULL) return false; /* errno is set by realloc */
+    memset(
+      bs->items + bs->bytes_capacity,
+      0,
+      new_capacity - bs->bytes_capacity
+    );
+    bs->items = new_items;
+    bs->bytes_capacity = new_capacity;
+  }
+
+  size_t bs_byte_index = bs->bitcount / 8;
+  size_t bs_bit_index = bs->bitcount % 8;
+
+  /* TODO: make this work... */
+  short byte_index = 0;
+  for (short i = bs_bit_index; i < 7; i++) {
+    bs->items[bs_byte_index] |= ((1 >> (7 - byte_index++)) & byte) >> (7 - bs_bit_index);
+  }
+
+  bs->bitcount += 8;
   return true;
 }
 
@@ -224,13 +259,11 @@ int main(int argc, char **argv)
 {
   /* TODO: commandline arguments, read all files, display sha512 sums for each */
   uint8_t *data = NULL;
-  size_t data_size = read_entire_file(stdin, &data);
-  if (data_size == 0) {
-    fprintf(stderr, "Error reading from stdin: %s", strerror(errno));
+  size_t l = read_entire_file(stdin, &data);
+  if (l == 0) {
+    fprintf(stderr, "Error reading stdin: %s", strerror(errno));
     return errno;
   }
-
-  printf("%s", (const char *) data);
 
   /* 5. Preprocessing */
   /* 5.1 Padding */
