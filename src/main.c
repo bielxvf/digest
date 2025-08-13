@@ -1,12 +1,14 @@
 /* SHA-512 implementation */
-#include <assert.h>
-#include <stdint.h>
 #include <stddef.h>
 #include <errno.h>
-#include <stdbool.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef unsigned char bool;
+#define true 1
+#define false 0
 
 uint64_t K[80] = {
   0x428a2f98d728ae22, 0x7137449123ef65cd,
@@ -86,145 +88,28 @@ uint64_t s_1(uint64_t x)
   return rotr(x, 19) ^ rotr(x, 61) ^ (x >> 6);
 }
 
-/* Errors */
-#define ENLOBJ  0x7D0 /* Passed null object, expected non null */
-#define ENNLOBJ 0x7D1 /* Passed non null object, expected null */
-
-const char *my_strerror(int err)
-{
-  switch (err) {
-    case ENLOBJ: return "Expected non null pointer";
-    case ENNLOBJ: return "Expected null pointer";
-    default: return strerror(err);
-  }
-}
-
-struct BitStream {
-  uint8_t *items;
-  size_t bytes_capacity;
-
-  size_t bitcount;
-};
-
-/* Allocates a BitStream on the heap */
-/* Returns a pointer to the newly allocated struct */
-/* Returns NULL and sets errno if there were errors */
-struct BitStream *BitStream_new(size_t bytes_capacity)
-{
-  struct BitStream *bs;
-  bs = malloc(sizeof(struct BitStream));
-  if (bs == NULL) return NULL; /* errno is set by malloc */
-
-  size_t capacity = bytes_capacity == 0 ? 8 : bytes_capacity;
-  bs->items = malloc(capacity);
-  if (bs->items == NULL) return NULL; /* errno is set by malloc */
-
-  memset(bs->items, 0, capacity);
-
-  bs->bytes_capacity = capacity;
-  bs->bitcount = 0;
-  return bs;
-}
-
-/* Frees a heap allocated BitStream and its items */
-void BitStream_free(struct BitStream *bs)
-{
-  assert(bs != NULL);
-  assert(bs->items != NULL);
-  free(bs->items);
-  free(bs);
-}
-
-/* Appends a bit (either 0 or 1) to the BitStream */
-/* Returns false and sets errno on error */
-bool BitStream_append_bit(struct BitStream *bs, bool bit)
-{
-  if (bs == NULL) {
-    errno = ENLOBJ;
-    return false;
-  }
-  if (bs->bitcount + 1 > bs->bytes_capacity * 8) {
-    size_t new_capacity = bs->bytes_capacity + (bs->bytes_capacity / 2);
-    uint8_t *new_items = realloc(bs->items, new_capacity);
-    if (new_items == NULL) return false; /* errno is set by realloc */
-    memset(
-      bs->items + bs->bytes_capacity,
-      0,
-      new_capacity - bs->bytes_capacity
-    );
-    bs->items = new_items;
-    bs->bytes_capacity = new_capacity;
-  }
-
-  if (!bit) {
-    bs->bitcount++;
-    return true;
-  }
-
-  size_t byte_index = bs->bitcount / 8;
-  size_t bit_index = bs->bitcount % 8;
-
-  bs->items[byte_index] |= 1 << (7 - bit_index);
-  bs->bitcount++;
-
-  return true;
-}
-
-/* Appends a byte to the BitStream */
-/* Returns false and sets errno on error */
-bool BitStream_append_uint8(struct BitStream *bs, uint8_t byte)
-{
-  if (bs == NULL) {
-    errno = ENLOBJ;
-    return false;
-  }
-  
-  if (bs->bitcount + 8 > bs->bytes_capacity * 8) {
-    size_t new_capacity = bs->bytes_capacity + (bs->bytes_capacity / 2);
-    uint8_t *new_items = realloc(bs->items, new_capacity);
-    if (new_items == NULL) return false; /* errno is set by realloc */
-    memset(
-      bs->items + bs->bytes_capacity,
-      0,
-      new_capacity - bs->bytes_capacity
-    );
-    bs->items = new_items;
-    bs->bytes_capacity = new_capacity;
-  }
-
-  size_t bs_byte_index = bs->bitcount / 8;
-  size_t bs_bit_index = bs->bitcount % 8;
-
-  /* TODO: make this work... */
-  short byte_index = 0;
-  for (short i = bs_bit_index; i < 7; i++) {
-    bs->items[bs_byte_index] |= ((1 >> (7 - byte_index++)) & byte) >> (7 - bs_bit_index);
-  }
-
-  bs->bitcount += 8;
-  return true;
-}
-
+#define BS_IMPLEMENTATION
+#include <BitStream.h>
 /* Reads an entire file by chunks */
 /* Returns the amount of bytes read */
 /* On realloc failure, returns number of bytes read so far, leaves *d allocated */
 /* Returns 0 and sets errno on error */
+#define READ_ENTIRE_FILE_CHUNK_BYTE_SIZE 4096
 size_t read_entire_file(FILE *fd, uint8_t **d)
 {
   if (*d != NULL) {
-    errno = ENNLOBJ;
     return 0;
   }
-  *d = malloc(4096);
+  *d = malloc(READ_ENTIRE_FILE_CHUNK_BYTE_SIZE);
   if (*d == NULL) return 0; /* errno is set by malloc */
   size_t size = 0;
-  size_t capacity = 4096;
+  size_t capacity = READ_ENTIRE_FILE_CHUNK_BYTE_SIZE;
 
-  uint8_t buffer[4096];
+  uint8_t buffer[READ_ENTIRE_FILE_CHUNK_BYTE_SIZE];
 
   for (
     size_t bytes_read = fread(buffer, 1, sizeof(buffer), fd); /* reads sizeof(buffer) amount of bytes */
-    bytes_read > 0;
+    bytes_read > 0;                                           /* the '1' refers to the amount of bytes */
     size += bytes_read, bytes_read = fread(buffer, 1, sizeof(buffer), fd)
   ) {
     if (capacity < size + bytes_read) {
@@ -247,28 +132,29 @@ size_t read_entire_file(FILE *fd, uint8_t **d)
   }
 
   if (ferror(fd)) {
-    errno = EIO;
     return 0;
   }
 
   return size;
 }
 
-#define strerror my_strerror
 int main(int argc, char **argv)
 {
   /* TODO: commandline arguments, read all files, display sha512 sums for each */
   uint8_t *data = NULL;
-  size_t l = read_entire_file(stdin, &data);
-  if (l == 0) {
+  size_t length = read_entire_file(stdin, &data);
+  if (length == 0) {
     fprintf(stderr, "Error reading stdin: %s", strerror(errno));
     return errno;
   }
 
-  /* 5. Preprocessing */
-  /* 5.1 Padding */
-  /* 5.2 Parsing */
-  /* 5.3 Setting the initial hash value */
+  void *end = &data[length];
+  for (uint8_t *it = data; it != end; it++) {
+    printf("%c", *it);
+  }
+
+  size_t bit_count = length * 8;
 
   return 0;
 }
+
