@@ -1,16 +1,12 @@
 /* SHA-512 implementation */
-#include <stddef.h>
+#include <assert.h>
 #include <errno.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
 
-typedef unsigned char bool;
-#define true 1
-#define false 0
-
-uint64_t K[80] = {
+const uint64_t K[80] = {
   0x428a2f98d728ae22, 0x7137449123ef65cd,
   0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc,
   0x3956c25bf348b538, 0x59f111f1b605d019,
@@ -53,6 +49,13 @@ uint64_t K[80] = {
   0x5fcb6fab3ad6faec, 0x6c44198c4a475817
 };
 
+const uint64_t H[8] = {
+  0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
+  0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+  0x510e527fade682d1, 0x9b05688c2b3e6c1f,
+  0x1f83d9abfb41bd6b, 0x5be0cd19137e2179
+};
+
 uint64_t Ch(uint64_t x, uint64_t y, uint64_t z)
 {
   return (x & y) ^ (~x & z);
@@ -88,43 +91,46 @@ uint64_t s_1(uint64_t x)
   return rotr(x, 19) ^ rotr(x, 61) ^ (x >> 6);
 }
 
-#define BS_IMPLEMENTATION
-#include <BitStream.h>
 /* Reads an entire file by chunks */
 /* Returns the amount of bytes read */
 /* On realloc failure, returns number of bytes read so far, leaves *d allocated */
 /* Returns 0 and sets errno on error */
 #define READ_ENTIRE_FILE_CHUNK_BYTE_SIZE 4096
-size_t read_entire_file(FILE *fd, uint8_t **d)
+uint64_t read_entire_file(FILE *fd, uint8_t **d)
 {
+  uint64_t size;
+  uint64_t capacity;
+  uint64_t new_capacity;
+  uint8_t buffer[READ_ENTIRE_FILE_CHUNK_BYTE_SIZE];
+  uint64_t bytes_read;
+  uint8_t **tmp = d;
+
   if (*d != NULL) {
     return 0;
   }
   *d = malloc(READ_ENTIRE_FILE_CHUNK_BYTE_SIZE);
   if (*d == NULL) return 0; /* errno is set by malloc */
-  size_t size = 0;
-  size_t capacity = READ_ENTIRE_FILE_CHUNK_BYTE_SIZE;
-
-  uint8_t buffer[READ_ENTIRE_FILE_CHUNK_BYTE_SIZE];
+  size = 0;
+  capacity = READ_ENTIRE_FILE_CHUNK_BYTE_SIZE;
 
   for (
-    size_t bytes_read = fread(buffer, 1, sizeof(buffer), fd); /* reads sizeof(buffer) amount of bytes */
+    bytes_read = fread(buffer, 1, sizeof buffer, fd); /* reads (sizeof buffer) amount of bytes */
     bytes_read > 0;                                           /* the '1' refers to the amount of bytes */
-    size += bytes_read, bytes_read = fread(buffer, 1, sizeof(buffer), fd)
+    size += bytes_read, bytes_read = fread(buffer, 1, sizeof buffer, fd)
   ) {
     if (capacity < size + bytes_read) {
-      size_t new_capacity = capacity + (capacity / 2);
+      new_capacity = capacity + (capacity / 2);
+      *tmp = realloc(*d, new_capacity);
       while (new_capacity < size + bytes_read) {
         new_capacity += new_capacity / 2;
       }
 
-      uint8_t *tmp = realloc(*d, new_capacity);
       if (tmp == NULL) {
         /* keep the data and let caller decide */
         return 0; /* errno is set by realloc */
       }
 
-      *d = tmp;
+      *d = *tmp;
       capacity = new_capacity;
     }
 
@@ -140,21 +146,112 @@ size_t read_entire_file(FILE *fd, uint8_t **d)
 
 int main(int argc, char **argv)
 {
-  /* TODO: commandline arguments, read all files, display sha512 sums for each */
   uint8_t *data = NULL;
-  size_t length = read_entire_file(stdin, &data);
-  if (length == 0) {
-    fprintf(stderr, "Error reading stdin: %s", strerror(errno));
+  uint64_t data_length;
+  uint64_t original_length;
+  uint64_t original_length_bits;
+  uint64_t n_zeroes;
+  uint64_t W[80];
+  uint64_t hash[8];
+
+  uint64_t i;
+  uint64_t j;
+  uint8_t *it;
+  void *end;
+
+  uint64_t a, b, c, d, e, f, g, h;
+  uint64_t T_1, T_2;
+
+  /* TODO: commandline arguments, read all files, display sha512 sums for each */
+
+  data_length = read_entire_file(stdin, &data);
+  if (data_length == 0) {
+    fprintf(stderr, "Error: %s", strerror(errno));
+    return errno;
+  }
+  original_length = data_length;
+  original_length_bits = original_length * 8;
+
+  for (n_zeroes = 0; data_length * 8 + 1 + n_zeroes != 896; n_zeroes++);
+
+  data_length += (1 + n_zeroes + 128) / 8;
+  data = realloc(data, data_length);
+  if (data == NULL) {
+    fprintf(stderr, "Error: %s", strerror(errno));
     return errno;
   }
 
-  void *end = &data[length];
-  for (uint8_t *it = data; it != end; it++) {
-    printf("%c", *it);
+  memset(data + original_length, 0, data_length - original_length);
+  data[original_length] |= 1 << 7;
+
+  for (i = 0; i < 8; i++) {
+    data[data_length - 1 - i] |= (uint8_t) original_length_bits >> i * 8;
+  }
+  
+  for (i = 0; i < 8; i++) {
+    hash[i] = H[i];
   }
 
-  size_t bit_count = length * 8;
+  /* Traverse 1024-bit blocks */
+  /* AKA 16 64-bit words */
+  for (it = data, end = &data[data_length]; it != end; it += 128) {
+    for (i = 0; i < 16; i++) {
+      uint64_t value = 0;
+      for (j = 0; j < 8; j++) {
+        value <<= 8;
+        value |= *(it + j);
+      }
 
+      W[i] = value;
+    }
+
+    for (i = 16; i < 80; i++) {
+      uint64_t value = 0;
+      for (j = 0; j < 8; j++) {
+        value <<= 8;
+        value |= *(it + j);
+      }
+
+      W[i] = s_1(W[i - 2]) + W[i - 7] + s_0(W[i - 15]) + W[i - 16];
+    }
+
+    a = hash[0];
+    b = hash[1];
+    c = hash[2];
+    d = hash[3];
+    e = hash[4];
+    f = hash[5];
+    g = hash[6];
+    h = hash[7];
+
+    for (i = 0; i < 80; i++) {
+      T_1 = h + S_1(e) + Ch(e, f, g) + K[i] + W[i];
+      T_2 = S_0(a) + Maj(a, b, c);
+      h = g;
+      g = f;
+      f = e;
+      e = d + T_1;
+      d = c;
+      c = b;
+      b = a;
+      a = T_1 + T_2;
+    }
+
+    hash[0] += a;
+    hash[1] += b;
+    hash[2] += c;
+    hash[3] += d;
+    hash[4] += e;
+    hash[5] += f;
+    hash[6] += g;
+    hash[7] += h;
+  }
+
+  for (i = 0; i < 8; i++) {
+    printf("%lx", hash[i]);
+  }
+  printf("\n");
+
+  free(data);
   return 0;
 }
-
