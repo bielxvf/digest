@@ -1,2 +1,2 @@
-# sha-512
-SHA-512 implementation in C
+# sha512
+SHA-512 commandline utility
