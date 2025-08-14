@@ -1,5 +1,6 @@
-/* simple header-only "library" to read an entire file */
-/* TODO: get rid of malloc! */
+/* 
+    simple header-only "library" to read an entire file
+*/
 #ifndef _REF_H
 #define _REF_H
 
@@ -72,3 +73,12 @@ uint64_t read_entire_file(FILE *fd, uint8_t **d)
 }
 
 #endif /* REF_IMPLEMENTATION */
+
+/*
+    Revision history:
+
+      1.0.0 (2025-8-14) first release
+*/
+/* 
+    TODO: get rid of malloc!
+*/

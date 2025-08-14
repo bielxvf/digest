@@ -1,3 +1,6 @@
+/* 
+    simple header-only "library" to calculate a SHA-512 hash
+*/
 #ifndef _SHA512_H
 #define _SHA512_H
 
@@ -199,3 +202,8 @@ int sha512_digest(uint8_t *source, uint64_t source_length, uint64_t *destination
 }
 
 #endif /* SHA512_IMPLEMENTATION */
+
+/*
+    TODO: get rid of malloc!
+    TODO: platform independent
+*/

@@ -7,8 +7,8 @@
 
 #define CC "gcc"
 #define WARNS "-pedantic", "-Wall", "-Wextra"
-#define STD "-std=c89"
-#define OPTS "-g", "-no-pie", "-fsanitize=address"
+#define OPTS "-std=c89"
+#define OPTS_DEBUG "-std=c89", "-g", "-no-pie", "-fsanitize=address"
 
 #define PROJECT_NAME "sha512"
 
@@ -22,9 +22,8 @@ int main(int argc, char **argv)
   nob_cmd_append(
     &cmd,
     CC, 
-    STD,
-    WARNS,
     OPTS,
+    WARNS,
     "-o", BUILD_FOLDER PROJECT_NAME, 
     SRC_FOLDER"main.c"
   );
