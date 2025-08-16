@@ -6,11 +6,12 @@
 
 /* pretty sure this is just a hack */
 typedef unsigned char uint8_t;
-typedef unsigned long uint64_t;
+typedef unsigned long long uint64_t;
 typedef unsigned int uint32_t;
 
-int digest_sha256(uint8_t *source, uint32_t source_length, uint32_t *destination);
 int digest_sha512(uint8_t *source, uint64_t source_length, uint64_t *destination);
+int digest_sha384(uint8_t *source, uint64_t source_length, uint64_t *destination);
+int digest_sha256(uint8_t *source, uint32_t source_length, uint32_t *destination);
 
 #endif /* _DIGEST_H */
 
@@ -19,6 +20,8 @@ int digest_sha512(uint8_t *source, uint64_t source_length, uint64_t *destination
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
+
+/* SHA-512 implementation */
 
 static const uint64_t digest_sha512_K[80] = {
   0x428a2f98d728ae22, 0x7137449123ef65cd,
@@ -207,6 +210,125 @@ int digest_sha512(uint8_t *source, uint64_t source_length, uint64_t *destination
   return 0;
 }
 
+/* SHA-384 implementation */
+
+#define digest_sha384_K digest_sha512_K
+
+static const uint64_t digest_sha384_H[8] = {
+  0xcbbb9d5dc1059ed8, 0x629a292a367cd507,
+  0x9159015a3070dd17, 0x152fecd8f70e5939,
+  0x67332667ffc00b31, 0x8eb44a8768581511,
+  0xdb0c2e0d64f98fa7, 0x47b5481dbefa4fa4
+};
+
+#define digest_sha384_Ch   digest_sha512_Ch
+#define digest_sha384_Maj  digest_sha512_Maj
+#define digest_sha384_rotr digest_sha512_rotr
+#define digest_sha384_S_0  digest_sha512_S_0
+#define digest_sha384_S_1  digest_sha512_S_1
+#define digest_sha384_s_0  digest_sha512_s_0
+#define digest_sha384_s_1  digest_sha512_s_1
+
+/* source: message, array of bytes */
+/* source_length: message length in bytes */
+/* destination: uint64_t[6] (result) */
+/* RETURN non-zero on error and sets errno (indirectly) */
+int digest_sha384(uint8_t *source, uint64_t source_length, uint64_t *destination)
+{
+  uint8_t *data = NULL;
+  uint64_t data_length;
+  uint64_t source_length_bits;
+  uint64_t n_zeroes;
+  uint64_t W[80];
+  uint64_t hash[8];
+
+  uint64_t i;
+  uint64_t j;
+  uint8_t *it;
+  void *end;
+
+  uint64_t a, b, c, d, e, f, g, h;
+  uint64_t T_1, T_2;
+
+  source_length_bits = source_length * 8;
+
+  /* calculate padding */
+  for (n_zeroes = 0; (source_length_bits + 1 + n_zeroes) % 1024 != 896; n_zeroes++);
+
+  data_length = source_length + (1 + n_zeroes + 128) / 8;
+  data = malloc(data_length);
+  if (data == NULL) {
+    return errno;
+  }
+
+  memcpy(data, source, source_length);
+  memset(data + source_length, 0, data_length - source_length);
+  data[source_length] |= 1 << 7;
+
+  for (i = 0; i < 8; i++) {
+    data[data_length - 8 + i] |= (uint8_t) (source_length_bits >> ((7 - i) * 8));
+  }
+  
+  for (i = 0; i < 8; i++) {
+    hash[i] = digest_sha384_H[i];
+  }
+
+  for (it = data, end = &data[data_length]; it != end; it += 128) {
+    for (i = 0; i < 16; i++) {
+      uint64_t value = 0;
+      for (j = 0; j < 8; j++) {
+        value <<= 8;
+        value |= *(it + i * 8 + j);
+      }
+
+      W[i] = value;
+    }
+
+    for (i = 16; i < 80; i++) {
+      W[i] = digest_sha384_s_1(W[i - 2]) + W[i - 7] + digest_sha384_s_0(W[i - 15]) + W[i - 16];
+    }
+
+    a = hash[0];
+    b = hash[1];
+    c = hash[2];
+    d = hash[3];
+    e = hash[4];
+    f = hash[5];
+    g = hash[6];
+    h = hash[7];
+
+    for (i = 0; i < 80; i++) {
+      T_1 = h + digest_sha384_S_1(e) + digest_sha384_Ch(e, f, g) + digest_sha384_K[i] + W[i];
+      T_2 = digest_sha384_S_0(a) + digest_sha384_Maj(a, b, c);
+      h = g;
+      g = f;
+      f = e;
+      e = d + T_1;
+      d = c;
+      c = b;
+      b = a;
+      a = T_1 + T_2;
+    }
+
+    hash[0] += a;
+    hash[1] += b;
+    hash[2] += c;
+    hash[3] += d;
+    hash[4] += e;
+    hash[5] += f;
+    hash[6] += g;
+    hash[7] += h;
+  }
+
+  for (i = 0; i < 6; i++) {
+    destination[i] = hash[i];
+  }
+
+  free(data);
+
+  return 0;
+}
+
 /* SHA-256 implementation */
 
 static const uint32_t digest_sha256_K[64] = {
@@ -305,20 +427,20 @@ int digest_sha256(uint8_t *source, uint32_t source_length, uint32_t *destination
   memset(data + source_length, 0, data_length - source_length);
   data[source_length] |= 1 << 7;
 
-  for (i = 0; i < 4; i++) {
-    data[data_length - 4 + i] |= (uint8_t) (source_length_bits >> ((7 - i) * 8));
+  for (i = 0; i < 8; i++) {
+    data[data_length - 8 + i] |= (uint8_t) (source_length_bits >> ((7 - i) * 8));
   }
   
   for (i = 0; i < 8; i++) {
-    destination[i] = digest_sha512_H[i];
+    destination[i] = digest_sha256_H[i];
   }
 
   for (it = data, end = &data[data_length]; it != end; it += 64) {
     for (i = 0; i < 16; i++) {
       uint32_t value = 0;
       for (j = 0; j < 4; j++) {
-        value <<= 4;
-        value |= *(it + i * 8 + j);
+        value <<= 8;
+        value |= *(it + i * 4 + j);
       }
 
       W[i] = value;
@@ -370,6 +492,7 @@ int digest_sha256(uint8_t *source, uint32_t source_length, uint32_t *destination
 /*
     Revision history:
 
+      2.2.2 (2025-8-16) added sha-384 implementation and patched sha-256
       2.1.1 (2025-8-15) remove unnecessary stdio.h + digest_sha256 implemented
       2.0.0 (2025-8-15) renamed to digest, added prefix
       1.0.0 (2025-8-14) first release
