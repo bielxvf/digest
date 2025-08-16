@@ -1,2 +1,2 @@
-# sha512
-SHA-512 commandline utility
+# digest
+Commandline utility for computing various hash/digests

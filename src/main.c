@@ -1,18 +1,18 @@
 #define REF_IMPLEMENTATION
 #include "ref.h"
 
-#define SHA512_IMPLEMENTATION
-#include "sha512.h"
+#define DIGEST_IMPLEMENTATION
+#include "digest.h"
 
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdint.h>
 
 int main(int argc, char **argv)
 {
   /* TODO: get rid of malloc! */
+  /* TODO: cmdline argument for every algorithm available in digest.h */
 
   uint8_t *data = NULL;
   uint64_t data_length;
@@ -28,11 +28,6 @@ int main(int argc, char **argv)
     fds[1] = NULL;
   } else {
     if (!strcmp("-h", argv[1])) {
-      printf("Usage: sha512 [FILE...]\n");
-      printf("With no arguments, sha512 will read from stdin.\n");
-      printf("Examples:\n");
-      printf("  sha512 message.txt\n");
-      printf("  echo -n abc | sha512\n");
       return 0;
     }
     for (i = 0; i < argc - 1; i++) {
@@ -53,7 +48,7 @@ int main(int argc, char **argv)
     }
     fclose(fds[i]);
 
-    sha512_digest(data, data_length, hash);
+    digest_sha512(data, data_length, hash);
     free(data);
     data = NULL;
 
