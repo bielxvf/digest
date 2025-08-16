@@ -6,8 +6,8 @@
 
 /* pretty sure this is just a hack */
 typedef unsigned char uint8_t;
-typedef unsigned long long uint64_t;
 typedef unsigned int uint32_t;
+typedef unsigned long uint64_t;
 
 int digest_sha512(uint8_t *source, uint64_t source_length, uint64_t *destination);
 int digest_sha384(uint8_t *source, uint64_t source_length, uint64_t *destination);
